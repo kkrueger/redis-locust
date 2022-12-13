@@ -1,5 +1,6 @@
 from locust import User, task, events
 from locust.runners import MasterRunner
+from boto3.dynamodb.conditions import Key
 import boto3
 import logging
 import time
@@ -22,11 +23,11 @@ def _(parser):
     parser.add_argument("--zipf_max_keys", type=int, env_var="RED_LOCUST_ZIPF_MAX_KEYS", default=10000000, help="Zipf max keys")
     parser.add_argument("--zipf_offset", type=int, env_var="RED_LOCUST_ZIPF_OFFSET", default=0, help="Zipf Offset")
     parser.add_argument("--zrem_seconds", type=int, env_var="RED_LOCUST_ZREM_SECONDS", default=300, help="Seconds to keep when trimming zsets")
-    parser.add_argument("--pipeline_size", type=int, env_var="RED_LOCUST_PIPELINE_SIZE", default=100, help="Commands per Redis pipeline")
+    parser.add_argument("--pipeline_size", type=int, env_var="RED_LOCUST_PIPELINE_SIZE", default=100, help="Commands per DynamoDb batch")
     parser.add_argument("--zcount_seconds", type=int, env_var="RED_LOCUST_ZCOUNT_SECONDS", default=150, help="Number of seconds to query for zcount")
-    parser.add_argument("--jumbo_frequency", type=int, env_var="RED_LOCUST_JUMBO_FREQUENCY", default=50, help="Frequency of jumbo zadd logic")
+    parser.add_argument("--jumbo_frequency", type=int, env_var="RED_LOCUST_JUMBO_FREQUENCY", default=50, help="Frequency of jumbo add logic")
     parser.add_argument("--jumbo_initial_exclude", type=int, env_var="RED_LOCUST_JUMBO_INITIAL_EXCLUDE", default=100, help="Number of initial keys to exclude from jumbo logic")
-    parser.add_argument("--jumbo_size", type=str, env_var="RED_LOCUST_JUMBO_SIZE", default="25,25,50,100,1000", help="Array representing the extra members for jumbo zadds")
+    parser.add_argument("--jumbo_size", type=str, env_var="RED_LOCUST_JUMBO_SIZE", default="25,25,50,100,1000", help="Array representing the extra members for jumbo adds")
     parser.add_argument("--version_display", type=str, env_var="RED_VERSION_DISPLAY", default="0.2", help="Just used to show locust file version in UI")
 
 class DynamoDbDataLayer():
@@ -77,8 +78,7 @@ class DynamoDbDataLayer():
 
     def count(self,dynamoClient):
         """
-        Function to count items in a Redis sorted Set.
-        Will count against active-active setup and stand-alone setup, recording requests to locust.
+        Function to count items in a DynamoDB table        
         """
 
         # Prepare data for below sections
@@ -89,10 +89,10 @@ class DynamoDbDataLayer():
         myResponse = None
         myException = None
         trans_start_time = time.perf_counter()
+        table = dynamoClient.Table(self.environment.parsed_options.table_name)
         try:
-            myResponse = dynamoClient.query(TableName=self.environment.parsed_options.table_name, Select='COUNT', 
-                KeyConditionExpression='Id = :id AND EventDate BETWEEN :startdate AND :enddate',
-                ExpressionAttributeValues={":id": {"S":keyname}, ":startdate": {"S":str(transtime-self.environment.parsed_options.zcount_seconds)}, ":enddate": {"S":str(transtime)}})            
+            myResponse = table.query(Select='COUNT', 
+                KeyConditionExpression=Key('Id').eq(keyname) & Key('EventDate').between(str(transtime-self.environment.parsed_options.zcount_seconds), str(transtime)))       
             if "LastEvaluatedKey" in myResponse:
                 raise Exception("Looks like we need to implement paging for the count query")
         except Exception as e:
@@ -109,33 +109,32 @@ class DynamoDbDataLayer():
 
     def add(self,dynamoClient):
         """
-        Function that will add recent transactions to sorted set, and then delete older transactions from the same sorted set.  Will
+        Function that will add recent transactions to the DynamoDB table, and then delete older transactions from the same table.  Will
         pick keys for actions and implements jumbo adds according to locust parameters.
-        Functions against active-active Redis and against a pair of stand-alone Redis instances, sending writes to all three locations.
         """
+
+        table = dynamoClient.Table(self.environment.parsed_options.table_name)
 
         # Build keys and member logic for use in later commands
         baseRequestName = "add"
-        keyint = self.get_key_int()
-        transtime = time.time()
+        keyint = self.get_key_int()        
 
-        transaction_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=random.randint(self.environment.parsed_options.value_min_chars, self.environment.parsed_options.value_max_chars)))
+        transaction_ids = [''.join(random.choices(string.ascii_uppercase + string.digits, k=random.randint(self.environment.parsed_options.value_min_chars, self.environment.parsed_options.value_max_chars)))]
 
-        #TODO: Do we want jumbo logic?
-        # orig_keyint = (keyint - self.environment.parsed_options.zipf_offset ) * self.environment.parsed_options.zipf_direction
-        # if ((orig_keyint > self.environment.parsed_options.jumbo_initial_exclude)  and (keyint % self.environment.parsed_options.jumbo_frequency == 0) ):
-        #     baseRequestName = "zadd_jumbo"
-        #     count = int(random.choice(self.environment.parsed_options.jumbo_size.split(',')))
-        #     for i in range(count):
-        #         members.update( {''.join(str(i)).join(random.choices(string.ascii_uppercase + string.digits, k=random.randint(self.environment.parsed_options.value_min_chars, self.environment.parsed_options.value_max_chars))): time.time()})
+        orig_keyint = (keyint - self.environment.parsed_options.zipf_offset ) * self.environment.parsed_options.zipf_direction
+        if ((orig_keyint > self.environment.parsed_options.jumbo_initial_exclude)  and (keyint % self.environment.parsed_options.jumbo_frequency == 0) ):
+             baseRequestName = "add_jumbo"
+             count = int(random.choice(self.environment.parsed_options.jumbo_size.split(',')))
+             for i in range(count):
+                 transaction_ids.append(''.join(str(i)).join(random.choices(string.ascii_uppercase + string.digits, k=random.randint(self.environment.parsed_options.value_min_chars, self.environment.parsed_options.value_max_chars))))
 
         myResponse = None
         myException = None
         trans_start_time = time.perf_counter()
         try:
-            #TODO: Include member value?
-            myResponse = dynamoClient.put_item(TableName=self.environment.parsed_options.table_name,
-                Item={"Id": {"S":self.get_key_name_from_int(keyint)},"EventDate":{"S":str(transtime)}, "TransactionId":{"S":transaction_id}})
+            for transaction_id in transaction_ids:
+                transtime = time.time()
+                myResponse = table.put_item(Item={"Id":self.get_key_name_from_int(keyint),"EventDate":str(transtime), "TransactionId":transaction_id})
 
         except Exception as e:
             myException = e
@@ -172,6 +171,73 @@ class DynamoDbDataLayer():
         #     response = myResponse,
         #     exception = myException)
 
+    def add_batch(self,dynamoClient):
+        """
+        Function that will add recent transactions to the DynamoDB table, and then delete older transactions from the same table.  Will
+        pick keys for actions and implements jumbo adds according to locust parameters.
+        """
+
+        table = dynamoClient.Table(self.environment.parsed_options.table_name)
+
+        # Build keys and member logic for use in later commands
+        baseRequestName = "add_batch"                
+        keyname_and_members_list = []        
+
+        for i in range(self.environment.parsed_options.pipeline_size-1):
+            keyint = self.get_key_int()
+            transaction_ids = [''.join(random.choices(string.ascii_uppercase + string.digits, k=random.randint(self.environment.parsed_options.value_min_chars, self.environment.parsed_options.value_max_chars)))]
+
+            orig_keyint = (keyint * self.environment.parsed_options.zipf_direction) - self.environment.parsed_options.zipf_offset
+            if ((orig_keyint > self.environment.parsed_options.jumbo_initial_exclude)  and (keyint % self.environment.parsed_options.jumbo_frequency == 0) ):
+                count = int(random.choice(self.environment.parsed_options.jumbo_size.split(',')))
+                for i in range(count):
+                    transaction_ids.append(''.join(str(i)).join(random.choices(string.ascii_uppercase + string.digits, k=random.randint(self.environment.parsed_options.value_min_chars, self.environment.parsed_options.value_max_chars))))
+            keyname_and_members_list.append((self.get_key_name_from_int(keyint), transaction_ids))              
+
+        myResponse = None
+        myException = None
+        trans_start_time = time.perf_counter()
+        try:
+            with table.batch_writer() as batch:
+                for i in keyname_and_members_list:                    
+                    for transaction_id in i[1]:
+                        transtime = time.time()
+                        myResponse = batch.put_item(Item={"Id":self.get_key_name_from_int(i[0]),"EventDate":str(transtime), "TransactionId":transaction_id})
+
+        except Exception as e:
+            myException = e
+
+        self.record_request_meta(
+            request_type = "",
+            name = baseRequestName,
+            start_time = trans_start_time,
+            end_time = time.perf_counter(),
+            response_length = 0,
+            response = myResponse,
+            exception = myException)
+
+
+        #TODO: Implement delete, or use Dynamo TTL?
+
+        # Active-active zrem section
+        # myResponse = None
+        # myException = None
+        # trans_start_time = time.perf_counter()
+        # try:
+        #     myResponse = localRedis.zremrangebyscore( \
+        #         ''.join((self.environment.parsed_options.key_name_prefix, str(keyint).zfill(self.environment.parsed_options.key_name_length))), \
+        #         0, transtime - self.environment.parsed_options.zrem_seconds)
+        # except Exception as e:
+        #     myException = e
+
+        # self.record_request_meta(
+        #     request_type = "aa",
+        #     name = "zrem",
+        #     start_time = trans_start_time,
+        #     end_time = time.perf_counter(),
+        #     response_length = 0,
+        #     response = myResponse,
+        #     exception = myException)
     
 
 class DynamoDbUser(User):
@@ -187,6 +253,10 @@ class DynamoDbUser(User):
     @task(1)
     def add(self):
         self.myDataLayer.add(myDynamoDb)
+
+    @task(1)
+    def add_batch(self):
+        self.myDataLayer.add_batch(myDynamoDb)
     
     @task(1)
     def count(self):
@@ -217,7 +287,9 @@ def on_test_start(environment, **kwargs):
         #myTls = (environment.parsed_options.tls == "Y")            
 
         #TODO: Make local mode configurable
-        myDynamoDb = boto3.client('dynamodb', endpoint_url='http://localhost:8000')       
+        endpoint_url = 'http://localhost:8000'
+        myDynamoDb = boto3.resource('dynamodb', endpoint_url=endpoint_url)
+
 
         try:
             myDynamoDb.create_table(TableName=environment.parsed_options.table_name, 
