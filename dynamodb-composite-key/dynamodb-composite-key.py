@@ -94,7 +94,6 @@ class DynamoDbDataLayer():
         try:
             myResponse = table.query(Select='COUNT', 
                 KeyConditionExpression=Key('Id').eq(keyname) & Key('EventDate').between(transtime-self.environment.parsed_options.zcount_seconds, transtime))
-            #print(f"Keyname: {keyname}; Range: {transtime-self.environment.parsed_options.zcount_seconds}-{transtime} Count:{myResponse['Count']}")
             if "LastEvaluatedKey" in myResponse:
                 raise Exception("Looks like we need to implement paging for the count query")
         except Exception as e:
@@ -119,7 +118,8 @@ class DynamoDbDataLayer():
 
         # Build keys and member logic for use in later commands
         baseRequestName = "add"
-        keyint = self.get_key_int()        
+        keyint = self.get_key_int()
+        keyname = self.get_key_name_from_int(keyint)
 
         transaction_ids = [''.join(random.choices(string.ascii_uppercase + string.digits, k=random.randint(self.environment.parsed_options.value_min_chars, self.environment.parsed_options.value_max_chars)))]
 
@@ -136,7 +136,7 @@ class DynamoDbDataLayer():
         try:
             for transaction_id in transaction_ids:
                 transtime = Decimal(time.time())                
-                myResponse = table.put_item(Item={"Id":self.get_key_name_from_int(keyint),"EventDate":transtime, "TransactionId":transaction_id})
+                myResponse = table.put_item(Item={"Id":keyname,"EventDate":transtime, "TransactionId":transaction_id})
 
         except Exception as e:
             myException = e
@@ -150,28 +150,42 @@ class DynamoDbDataLayer():
             response = myResponse,
             exception = myException)
 
+        # Delete old transactions
+        myResponse = None
+        myException = None
+        trans_start_time = time.perf_counter()
 
-        #TODO: Implement delete, or use Dynamo TTL?
+        last_evaluated_key = None
+        items_to_delete = []
+        
+        try:
+            while True:
+                # better way to do this conditional call?
+                if last_evaluated_key:
+                    myResponse = table.query(Select='SPECIFIC_ATTRIBUTES', ProjectionExpression='EventDate', ExclusiveStartKey=last_evaluated_key,
+                        KeyConditionExpression=Key('Id').eq(keyname) & Key('EventDate').between(0, transtime - self.environment.parsed_options.zrem_seconds))
+                else:
+                    myResponse = table.query(Select='SPECIFIC_ATTRIBUTES', ProjectionExpression='EventDate',
+                        KeyConditionExpression=Key('Id').eq(keyname) & Key('EventDate').between(0, transtime - self.environment.parsed_options.zrem_seconds))                                    
+                items_to_delete.extend(myResponse['Items'])
+                if not "LastEvaluatedKey" in myResponse:
+                    break                
+                last_evaluated_key = myResponse['LastEvaluatedKey']
+                               
+            for i in items_to_delete:
+                table.delete_item(Key={"Id":keyname,"EventDate":i['EventDate']})
 
-        # Active-active zrem section
-        # myResponse = None
-        # myException = None
-        # trans_start_time = time.perf_counter()
-        # try:
-        #     myResponse = localRedis.zremrangebyscore( \
-        #         ''.join((self.environment.parsed_options.key_name_prefix, str(keyint).zfill(self.environment.parsed_options.key_name_length))), \
-        #         0, transtime - self.environment.parsed_options.zrem_seconds)
-        # except Exception as e:
-        #     myException = e
+        except Exception as e:
+            myException = e
 
-        # self.record_request_meta(
-        #     request_type = "aa",
-        #     name = "zrem",
-        #     start_time = trans_start_time,
-        #     end_time = time.perf_counter(),
-        #     response_length = 0,
-        #     response = myResponse,
-        #     exception = myException)
+        self.record_request_meta(
+            request_type = "",
+            name = "delete",
+            start_time = trans_start_time,
+            end_time = time.perf_counter(),
+            response_length = 0,
+            response = myResponse,
+            exception = myException)
 
     def add_batch(self,dynamoClient):
         """
@@ -219,7 +233,7 @@ class DynamoDbDataLayer():
             exception = myException)
 
 
-        #TODO: Implement delete, or use Dynamo TTL?
+        #TODO: Implement delete in a batch; use delete code in add as a start
 
         # Active-active zrem section
         # myResponse = None
