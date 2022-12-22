@@ -1,6 +1,7 @@
 from locust import User, task, events
 from locust.runners import MasterRunner
 from boto3.dynamodb.conditions import Key
+from decimal import Decimal
 import boto3
 import logging
 import time
@@ -82,7 +83,7 @@ class DynamoDbDataLayer():
         """
 
         # Prepare data for below sections
-        transtime = time.time()
+        transtime = Decimal(time.time())
         keyint = self.get_key_int()
         keyname = self.get_key_name_from_int(keyint)
         
@@ -92,7 +93,8 @@ class DynamoDbDataLayer():
         table = dynamoClient.Table(self.environment.parsed_options.table_name)
         try:
             myResponse = table.query(Select='COUNT', 
-                KeyConditionExpression=Key('Id').eq(keyname) & Key('EventDate').between(str(transtime-self.environment.parsed_options.zcount_seconds), str(transtime)))       
+                KeyConditionExpression=Key('Id').eq(keyname) & Key('EventDate').between(transtime-self.environment.parsed_options.zcount_seconds, transtime))
+            #print(f"Keyname: {keyname}; Range: {transtime-self.environment.parsed_options.zcount_seconds}-{transtime} Count:{myResponse['Count']}")
             if "LastEvaluatedKey" in myResponse:
                 raise Exception("Looks like we need to implement paging for the count query")
         except Exception as e:
@@ -133,8 +135,8 @@ class DynamoDbDataLayer():
         trans_start_time = time.perf_counter()
         try:
             for transaction_id in transaction_ids:
-                transtime = time.time()
-                myResponse = table.put_item(Item={"Id":self.get_key_name_from_int(keyint),"EventDate":str(transtime), "TransactionId":transaction_id})
+                transtime = Decimal(time.time())                
+                myResponse = table.put_item(Item={"Id":self.get_key_name_from_int(keyint),"EventDate":transtime, "TransactionId":transaction_id})
 
         except Exception as e:
             myException = e
@@ -201,8 +203,8 @@ class DynamoDbDataLayer():
             with table.batch_writer() as batch:
                 for i in keyname_and_members_list:                    
                     for transaction_id in i[1]:
-                        transtime = time.time()
-                        myResponse = batch.put_item(Item={"Id":self.get_key_name_from_int(i[0]),"EventDate":str(transtime), "TransactionId":transaction_id})
+                        transtime = Decimal(time.time())
+                        myResponse = batch.put_item(Item={"Id":i[0],"EventDate":transtime, "TransactionId":transaction_id})
 
         except Exception as e:
             myException = e
@@ -290,10 +292,9 @@ def on_test_start(environment, **kwargs):
         endpoint_url = 'http://localhost:8000'
         myDynamoDb = boto3.resource('dynamodb', endpoint_url=endpoint_url)
 
-
         try:
             myDynamoDb.create_table(TableName=environment.parsed_options.table_name, 
-                AttributeDefinitions=[{"AttributeName":"Id","AttributeType":"S"},{"AttributeName":"EventDate","AttributeType":"S"}], 
+                AttributeDefinitions=[{"AttributeName":"Id","AttributeType":"S"},{"AttributeName":"EventDate","AttributeType":"N"}], 
                 KeySchema=[{"AttributeName":"Id","KeyType":"HASH"}, {"AttributeName":"EventDate", "KeyType":"RANGE"}],
                 ProvisionedThroughput={"ReadCapacityUnits":5, "WriteCapacityUnits":5})
         except myDynamoDb.exceptions.ResourceInUseException:
