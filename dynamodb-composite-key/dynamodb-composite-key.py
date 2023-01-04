@@ -237,12 +237,12 @@ class DynamoDbDataLayer():
         myResponse = None
         myException = None
         trans_start_time = time.perf_counter()
-
-        last_evaluated_key = None
+        
         items_to_delete = []
         
         try:
             for i in keyname_and_members_list:
+                last_evaluated_key = None
                 while True:
                     # better way to do this conditional call?
                     if last_evaluated_key:
