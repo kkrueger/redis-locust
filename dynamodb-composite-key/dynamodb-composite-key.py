@@ -92,11 +92,23 @@ class DynamoDbDataLayer():
         myException = None
         trans_start_time = time.perf_counter()
         table = dynamoClient.Table(self.environment.parsed_options.table_name)
+
+        last_evaluated_key = None
+        record_count = 0
         try:
-            myResponse = table.query(Select='COUNT', 
-                KeyConditionExpression=Key('Id').eq(keyname) & Key('EventDate').between(transtime-self.environment.parsed_options.zcount_seconds, transtime))
-            if "LastEvaluatedKey" in myResponse:
-                raise Exception("Looks like we need to implement paging for the count query")
+            while True:
+                if last_evaluated_key:
+                    myResponse = table.query(Select='COUNT', 
+                        KeyConditionExpression=Key('Id').eq(keyname) & Key('EventDate').between(transtime-self.environment.parsed_options.zcount_seconds, transtime))
+                else:
+                    myResponse = table.query(Select='COUNT', 
+                        KeyConditionExpression=Key('Id').eq(keyname) & Key('EventDate').between(transtime-self.environment.parsed_options.zcount_seconds, transtime))
+                record_count += myResponse['Count']
+
+                if not "LastEvaluatedKey" in myResponse:
+                    break                
+                last_evaluated_key = myResponse['LastEvaluatedKey']
+
         except Exception as e:
             myException = e
 
@@ -106,7 +118,7 @@ class DynamoDbDataLayer():
             start_time = trans_start_time,
             end_time = time.perf_counter(),
             response_length = 0,
-            response = myResponse,
+            response = record_count,
             exception = myException)
 
     def add(self,dynamoClient):
