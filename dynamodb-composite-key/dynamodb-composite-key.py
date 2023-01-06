@@ -3,6 +3,7 @@ from locust.runners import MasterRunner
 from boto3.dynamodb.conditions import Key
 from decimal import Decimal
 import boto3
+import botocore
 import logging
 import time
 import random
@@ -251,7 +252,7 @@ class DynamoDbDataLayer():
         # Delete old transactions using a batch
         if self.environment.parsed_options.zrem_seconds == 0:
             return
-            
+
         myResponse = None
         myException = None
         trans_start_time = time.perf_counter()
@@ -338,7 +339,7 @@ def on_test_start(environment, **kwargs):
             endpoint_url = 'http://localhost:8000'
             myDynamoDb = boto3.resource('dynamodb', endpoint_url=endpoint_url)
         else:
-            myDynamoDb = boto3.resource('dynamodb')
+            myDynamoDb = boto3.resource('dynamodb'config=botocore.client.Config(max_pool_connections=50))
 
         try:
             myDynamoDb.create_table(TableName=environment.parsed_options.table_name, 
