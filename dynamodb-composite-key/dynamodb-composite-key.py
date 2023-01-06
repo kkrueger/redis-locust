@@ -149,8 +149,9 @@ class DynamoDbDataLayer():
         trans_start_time = time.perf_counter()
         try:
             for transaction_id in transaction_ids:
-                transtime = Decimal(time.time())                
-                myResponse = table.put_item(Item={"Id":keyname,"EventDate":transtime, "TransactionId":transaction_id})
+                transtime = Decimal(time.time())
+                expiration_date = transtime + self.environment.parsed_options.zrem_seconds        
+                myResponse = table.put_item(Item={"Id":keyname,"EventDate":transtime, "ExpirationDate": expiration_date, "TransactionId":transaction_id})
 
         except Exception as e:
             myException = e
@@ -165,44 +166,44 @@ class DynamoDbDataLayer():
             exception = myException)
 
         # Delete old transactions
-        if self.environment.parsed_options.zrem_seconds == 0:
-            return
+        # if self.environment.parsed_options.zrem_seconds == 0:
+        #     return
 
-        myResponse = None
-        myException = None
-        trans_start_time = time.perf_counter()
+        # myResponse = None
+        # myException = None
+        # trans_start_time = time.perf_counter()
 
-        last_evaluated_key = None
-        items_to_delete = []
+        # last_evaluated_key = None
+        # items_to_delete = []
         
-        try:
-            while True:
-                # better way to do this conditional call?
-                if last_evaluated_key:
-                    myResponse = table.query(Select='SPECIFIC_ATTRIBUTES', ProjectionExpression='EventDate', ExclusiveStartKey=last_evaluated_key,
-                        KeyConditionExpression=Key('Id').eq(keyname) & Key('EventDate').between(0, transtime - self.environment.parsed_options.zrem_seconds))
-                else:
-                    myResponse = table.query(Select='SPECIFIC_ATTRIBUTES', ProjectionExpression='EventDate',
-                        KeyConditionExpression=Key('Id').eq(keyname) & Key('EventDate').between(0, transtime - self.environment.parsed_options.zrem_seconds))                                    
-                items_to_delete.extend(myResponse['Items'])
-                if not "LastEvaluatedKey" in myResponse:
-                    break                
-                last_evaluated_key = myResponse['LastEvaluatedKey']
+        # try:
+        #     while True:
+        #         # better way to do this conditional call?
+        #         if last_evaluated_key:
+        #             myResponse = table.query(Select='SPECIFIC_ATTRIBUTES', ProjectionExpression='EventDate', ExclusiveStartKey=last_evaluated_key,
+        #                 KeyConditionExpression=Key('Id').eq(keyname) & Key('EventDate').between(0, transtime - self.environment.parsed_options.zrem_seconds))
+        #         else:
+        #             myResponse = table.query(Select='SPECIFIC_ATTRIBUTES', ProjectionExpression='EventDate',
+        #                 KeyConditionExpression=Key('Id').eq(keyname) & Key('EventDate').between(0, transtime - self.environment.parsed_options.zrem_seconds))                                    
+        #         items_to_delete.extend(myResponse['Items'])
+        #         if not "LastEvaluatedKey" in myResponse:
+        #             break                
+        #         last_evaluated_key = myResponse['LastEvaluatedKey']
             
-            for i in items_to_delete:
-                table.delete_item(Key={"Id":keyname,"EventDate":i['EventDate']})                
+        #     for i in items_to_delete:
+        #         table.delete_item(Key={"Id":keyname,"EventDate":i['EventDate']})                
 
-        except Exception as e:
-            myException = e
+        # except Exception as e:
+        #     myException = e
 
-        self.record_request_meta(
-            request_type = "",
-            name = "delete",
-            start_time = trans_start_time,
-            end_time = time.perf_counter(),
-            response_length = 0,
-            response = myResponse,
-            exception = myException)
+        # self.record_request_meta(
+        #     request_type = "",
+        #     name = "delete",
+        #     start_time = trans_start_time,
+        #     end_time = time.perf_counter(),
+        #     response_length = 0,
+        #     response = myResponse,
+        #     exception = myException)
 
     def add_batch(self,dynamoClient):
         """
@@ -235,7 +236,9 @@ class DynamoDbDataLayer():
             with table.batch_writer() as batch:
                 for i in keyname_and_members_list:                    
                     for transaction_id in i[1]:
-                        myResponse = batch.put_item(Item={"Id":i[0],"EventDate":Decimal(time.time()), "TransactionId":transaction_id})
+                        event_date = Decimal(time.time())
+                        expiration_date = event_date + self.environment.parsed_options.zrem_seconds
+                        myResponse = batch.put_item(Item={"Id":i[0],"EventDate":event_date, "ExpirationDate": expiration_date, "TransactionId":transaction_id})
 
         except Exception as e:
             myException = e
@@ -250,46 +253,46 @@ class DynamoDbDataLayer():
             exception = myException)
 
         # Delete old transactions using a batch
-        if self.environment.parsed_options.zrem_seconds == 0:
-            return
+        # if self.environment.parsed_options.zrem_seconds == 0:
+        #     return
 
-        myResponse = None
-        myException = None
-        trans_start_time = time.perf_counter()
+        # myResponse = None
+        # myException = None
+        # trans_start_time = time.perf_counter()
         
-        items_to_delete = []
+        # items_to_delete = []
         
-        try:
-            for i in keyname_and_members_list:
-                last_evaluated_key = None
-                while True:
-                    # better way to do this conditional call?
-                    if last_evaluated_key:
-                        myResponse = table.query(Select='SPECIFIC_ATTRIBUTES', ProjectionExpression='Id,EventDate', ExclusiveStartKey=last_evaluated_key,
-                            KeyConditionExpression=Key('Id').eq(i[0]) & Key('EventDate').between(0, transtime - self.environment.parsed_options.zrem_seconds))
-                    else:
-                        myResponse = table.query(Select='SPECIFIC_ATTRIBUTES', ProjectionExpression='Id,EventDate',
-                            KeyConditionExpression=Key('Id').eq(i[0]) & Key('EventDate').between(0, transtime - self.environment.parsed_options.zrem_seconds))                                    
-                    items_to_delete.extend(myResponse['Items'])
-                    if not "LastEvaluatedKey" in myResponse:
-                        break                
-                    last_evaluated_key = myResponse['LastEvaluatedKey']
+        # try:
+        #     for i in keyname_and_members_list:
+        #         last_evaluated_key = None
+        #         while True:
+        #             # better way to do this conditional call?
+        #             if last_evaluated_key:
+        #                 myResponse = table.query(Select='SPECIFIC_ATTRIBUTES', ProjectionExpression='Id,EventDate', ExclusiveStartKey=last_evaluated_key,
+        #                     KeyConditionExpression=Key('Id').eq(i[0]) & Key('EventDate').between(0, transtime - self.environment.parsed_options.zrem_seconds))
+        #             else:
+        #                 myResponse = table.query(Select='SPECIFIC_ATTRIBUTES', ProjectionExpression='Id,EventDate',
+        #                     KeyConditionExpression=Key('Id').eq(i[0]) & Key('EventDate').between(0, transtime - self.environment.parsed_options.zrem_seconds))                                    
+        #             items_to_delete.extend(myResponse['Items'])
+        #             if not "LastEvaluatedKey" in myResponse:
+        #                 break                
+        #             last_evaluated_key = myResponse['LastEvaluatedKey']
                         
-            with table.batch_writer(overwrite_by_pkeys=['Id', 'EventDate']) as batch:
-                for i in items_to_delete:                    
-                    batch.delete_item(Key={"Id":i['Id'],"EventDate":i['EventDate']})                        
+        #     with table.batch_writer(overwrite_by_pkeys=['Id', 'EventDate']) as batch:
+        #         for i in items_to_delete:                    
+        #             batch.delete_item(Key={"Id":i['Id'],"EventDate":i['EventDate']})                        
                 
-        except Exception as e:
-            myException = e
+        # except Exception as e:
+        #     myException = e
 
-        self.record_request_meta(
-            request_type = "",
-            name = "delete_batch",
-            start_time = trans_start_time,
-            end_time = time.perf_counter(),
-            response_length = 0,
-            response = myResponse,
-            exception = myException)
+        # self.record_request_meta(
+        #     request_type = "",
+        #     name = "delete_batch",
+        #     start_time = trans_start_time,
+        #     end_time = time.perf_counter(),
+        #     response_length = 0,
+        #     response = myResponse,
+        #     exception = myException)
 
 class DynamoDbUser(User):
     """
@@ -345,7 +348,8 @@ def on_test_start(environment, **kwargs):
             myDynamoDb.create_table(TableName=environment.parsed_options.table_name, 
                 AttributeDefinitions=[{"AttributeName":"Id","AttributeType":"S"},{"AttributeName":"EventDate","AttributeType":"N"}], 
                 KeySchema=[{"AttributeName":"Id","KeyType":"HASH"}, {"AttributeName":"EventDate", "KeyType":"RANGE"}],
-                ProvisionedThroughput={"ReadCapacityUnits":5, "WriteCapacityUnits":5})
+                ProvisionedThroughput={"ReadCapacityUnits":5, "WriteCapacityUnits":5}),
+                
         except Exception as e:
             if(e.response["Error"]["Code"]=="ResourceInUseException"):
                 pass 
