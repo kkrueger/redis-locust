@@ -349,4 +349,5 @@ def on_test_start(environment, **kwargs):
         except Exception as e:
             if(e.response["Error"]["Code"]=="ResourceInUseException"):
                 pass 
-            raise e
+            else:
+                raise e
