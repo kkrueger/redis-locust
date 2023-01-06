@@ -346,6 +346,6 @@ def on_test_start(environment, **kwargs):
                 AttributeDefinitions=[{"AttributeName":"Id","AttributeType":"S"},{"AttributeName":"EventDate","AttributeType":"N"}], 
                 KeySchema=[{"AttributeName":"Id","KeyType":"HASH"}, {"AttributeName":"EventDate", "KeyType":"RANGE"}],
                 ProvisionedThroughput={"ReadCapacityUnits":5, "WriteCapacityUnits":5})
-        except botocore.errorfactory.ResourceInUseException:
-            #NOOP: table already exists
+        except Exception as e:
+            print(e.response)
             pass 
