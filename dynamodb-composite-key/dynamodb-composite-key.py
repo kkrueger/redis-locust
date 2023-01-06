@@ -1,7 +1,7 @@
 from locust import User, task, events
 from locust.runners import MasterRunner
 from boto3.dynamodb.conditions import Key
-from botocore import client
+from botocore import client, errorfactory
 from decimal import Decimal
 import boto3
 import logging
@@ -346,6 +346,6 @@ def on_test_start(environment, **kwargs):
                 AttributeDefinitions=[{"AttributeName":"Id","AttributeType":"S"},{"AttributeName":"EventDate","AttributeType":"N"}], 
                 KeySchema=[{"AttributeName":"Id","KeyType":"HASH"}, {"AttributeName":"EventDate", "KeyType":"RANGE"}],
                 ProvisionedThroughput={"ReadCapacityUnits":5, "WriteCapacityUnits":5})
-        except myDynamoDb.exceptions.ResourceInUseException:
+        except errorfactory.ResourceInUseException:
             #NOOP: table already exists
             pass 
