@@ -184,9 +184,11 @@ class DynamoDbDataLayer():
                 if not "LastEvaluatedKey" in myResponse:
                     break                
                 last_evaluated_key = myResponse['LastEvaluatedKey']
-                               
+            
+            print(f"Batch deleting {len(items_to_delete)} items...")
             for i in items_to_delete:
                 table.delete_item(Key={"Id":keyname,"EventDate":i['EventDate']})
+            print("Deletion complete")
 
         except Exception as e:
             myException = e
@@ -269,8 +271,10 @@ class DynamoDbDataLayer():
                     last_evaluated_key = myResponse['LastEvaluatedKey']
                         
             with table.batch_writer(overwrite_by_pkeys=['Id', 'EventDate']) as batch:
+                print(f"Batch deleting {len(items_to_delete)} items...")
                 for i in items_to_delete:                    
                     myResponse = batch.delete_item(Key={"Id":i['Id'],"EventDate":i['EventDate']})                            
+                print("Batch delete complete")
 
         except Exception as e:
             myException = e
