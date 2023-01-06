@@ -1,8 +1,8 @@
 from locust import User, task, events
 from locust.runners import MasterRunner
 from boto3.dynamodb.conditions import Key
-from botocore import client
 from decimal import Decimal
+import botocore
 import boto3
 import logging
 import time
@@ -339,13 +339,13 @@ def on_test_start(environment, **kwargs):
             endpoint_url = 'http://localhost:8000'
             myDynamoDb = boto3.resource('dynamodb', endpoint_url=endpoint_url)
         else:
-            myDynamoDb = boto3.resource('dynamodb', config=client.Config(max_pool_connections=50))
+            myDynamoDb = boto3.resource('dynamodb', config=botocore.client.Config(max_pool_connections=50))
 
         try:
             myDynamoDb.create_table(TableName=environment.parsed_options.table_name, 
                 AttributeDefinitions=[{"AttributeName":"Id","AttributeType":"S"},{"AttributeName":"EventDate","AttributeType":"N"}], 
                 KeySchema=[{"AttributeName":"Id","KeyType":"HASH"}, {"AttributeName":"EventDate", "KeyType":"RANGE"}],
                 ProvisionedThroughput={"ReadCapacityUnits":5, "WriteCapacityUnits":5})
-        except myDynamoDb.exceptions.ResourceInUseException:
+        except botocore.exceptions.ResourceInUseException:
             #NOOP: table already exists
             pass 
