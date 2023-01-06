@@ -339,7 +339,7 @@ def on_test_start(environment, **kwargs):
             endpoint_url = 'http://localhost:8000'
             myDynamoDb = boto3.resource('dynamodb', endpoint_url=endpoint_url)
         else:
-            myDynamoDb = boto3.resource('dynamodb'config=botocore.client.Config(max_pool_connections=50))
+            myDynamoDb = boto3.resource('dynamodb', config=botocore.client.Config(max_pool_connections=50))
 
         try:
             myDynamoDb.create_table(TableName=environment.parsed_options.table_name, 
