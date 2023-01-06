@@ -347,5 +347,6 @@ def on_test_start(environment, **kwargs):
                 KeySchema=[{"AttributeName":"Id","KeyType":"HASH"}, {"AttributeName":"EventDate", "KeyType":"RANGE"}],
                 ProvisionedThroughput={"ReadCapacityUnits":5, "WriteCapacityUnits":5})
         except Exception as e:
-            print(e.response)
-            pass 
+            if(e.response["Error"]["Code"]=="ResourceInUseException"):
+                pass 
+            raise e
